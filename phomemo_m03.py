@@ -77,13 +77,29 @@ class Printer:
     def disconnect_printer(self) -> None:
         """Disconnect from phomemo printer
         """
-        if self.com == None:
+        if self.com is None:
             print("Printer is not connected.")
             return
         if not self.com.is_open:
             print("Printer is not connected.")
             return
-        self.com.close()
+
+        flushed = True
+        try:
+            self.com.flush()  # block until OS write buffer is sent
+            time.sleep(0.3)  # let BT stack actually drain over the air
+        except Exception as e:
+            flushed = False
+            print(f"Flush failed, connection likely already broken: {e}")
+
+        try:
+            self.com.close()
+        except Exception as e:
+            print(f"Close failed: {e}")
+
+        if not flushed:
+            raise IOError("Printer disconnect: flush failed, print may be incomplete")
+
         print("Printer disconnected.")
 
     def send_data(self, data: List[int]) -> None:
