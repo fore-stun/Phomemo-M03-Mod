@@ -1,5 +1,6 @@
 from typing import Tuple, List
 import time
+import threading
 
 import serial
 from PIL import Image
@@ -55,6 +56,47 @@ class Printer:
         else:
             self.paper_width = Printer.PAPER_WIDTH_80
 
+    def _close_with_timeout(
+        self, flush_timeout: float = 2.0, close_timeout: float = 1.0
+    ) -> bool:
+        """
+        Flush and close the serial port with hard timeouts.
+        Returns True if both completed, False if either timed out.
+        """
+        if self.com is None or not self.com.is_open:
+            return False
+
+        result = {"flushed": False, "closed": False, "exc": None}
+
+        def do_cleanup():
+            try:
+                self.com.flush()
+                result["flushed"] = True
+            except Exception as e:
+                result["exc"] = ("flush", e)
+                return  # skip close if flush failed hard
+
+            try:
+                self.com.close()
+                result["closed"] = True
+            except Exception as e:
+                result["exc"] = ("close", e)
+
+        t = threading.Thread(target=do_cleanup, daemon=True)
+        t.start()
+        t.join(flush_timeout + close_timeout)
+
+        if t.is_alive():
+            # Cleanup is still blocking -> connection wedged
+            return False
+
+        if result["exc"]:
+            op, exc = result["exc"]
+            print(f"Cleanup {op} failed: {exc}")
+            return False
+
+        return result["flushed"] and result["closed"]
+
     def connect_printer(self) -> bool:
         """Connect to phomemo Printer
 
@@ -86,21 +128,10 @@ class Printer:
             print("Printer is not connected.")
             return
 
-        flushed = True
-        try:
-            self.com.flush()  # block until OS write buffer is sent
-            time.sleep(0.3)  # let BT stack actually drain over the air
-        except Exception as e:
-            flushed = False
-            print(f"Flush failed, connection likely already broken: {e}")
-
-        try:
-            self.com.close()
-        except Exception as e:
-            print(f"Close failed: {e}")
-
-        if not flushed:
-            raise IOError("Printer disconnect: flush failed, print may be incomplete")
+        if not self._close_with_timeout():
+            raise IOError(
+                "Printer disconnect: cleanup timed out, print may be incomplete"
+            )
 
         print("Printer disconnected.")
 
