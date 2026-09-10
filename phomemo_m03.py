@@ -63,7 +63,9 @@ class Printer:
         """
 
         try:
-            self.com = serial.Serial(self.trg_comport, 115200, timeout=1)
+            self.com = serial.Serial(
+                self.trg_comport, 115200, timeout=1, write_timeout=5
+            )
         except Exception as _e:
             print(
                 f"Failed to connect to {self.trg_comport}. Please check the connection."
@@ -243,14 +245,13 @@ class Printer:
             self.send_data(Printer._FEED_FINISH)
 
             # Wait for printing to finish
-            while True:
+            deadline = time.time() + 15
+            while time.time() < deadline:
                 self.com.write([0x1F, 0x11, 0x0E])  # get command
                 try:
                     ret = self.com.read()
-                except:
-                    continue
-                
-                # if printer status is not busy , some responce returned
+                except Exception:
+                    break  # socket died — stop polling, go straight to close
                 if ret != b"": 
                     break
 
